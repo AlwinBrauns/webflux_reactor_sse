@@ -74,10 +74,10 @@ public class UploadController {
             .repeat()
             .timeout(Duration.ofSeconds(30))
             .distinctUntilChanged()
+            .takeUntil(_status -> _status.equals(100L))
             .map(_status -> {
                 return _status.toString() + "%";
             })
-            .takeUntil(_status -> _status.equals("100%"))
             .doOnNext(percentage -> {
                 if(percentage.equals("100%")) {
                     sseStreamController.getMainSinks().tryEmitNext(
