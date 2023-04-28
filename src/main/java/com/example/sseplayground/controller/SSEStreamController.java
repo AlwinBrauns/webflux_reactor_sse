@@ -19,10 +19,10 @@ public class SSEStreamController {
     private final Sinks.Many<ServerSentEvent<String>> mainSinks = Sinks.many().multicast().onBackpressureBuffer();
 
     public SSEStreamController() {
-        Flux.interval(Duration.ofSeconds(10)).map(sq -> {
+        Flux.interval(Duration.ofSeconds(60)).map(sq -> {
             return mainSinks.tryEmitNext(ServerSentEvent.<String>builder()
                             .id(UUID.randomUUID().toString())
-                            .event("message")
+                            .event("keep-alive")
                             .data("ping")
                     .build());
         }).subscribe();

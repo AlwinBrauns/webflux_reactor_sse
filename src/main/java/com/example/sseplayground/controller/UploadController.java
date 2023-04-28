@@ -4,8 +4,6 @@ import com.example.sseplayground.models.Message;
 import jakarta.annotation.PostConstruct;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
-import lombok.Singular;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +12,7 @@ import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
@@ -21,7 +20,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.util.UUID;
 
 @RestController
 @CrossOrigin("*")
@@ -69,7 +67,7 @@ public class UploadController {
         );
     }
 
-    private Flux<Progress> getProgress(Mono<Long> status, FilePart filePart) {
+    private Flux<Progress> getProgress(Mono<Long> status, FilePart file) {
         return status
             .repeat()
             .timeout(Duration.ofSeconds(30))
@@ -78,42 +76,36 @@ public class UploadController {
             .map(_status -> {
                 return _status.toString() + "%";
             })
-            .doOnNext(percentage -> {
-                if(percentage.equals("100%")) {
-                    sseStreamController.getMainSinks().tryEmitNext(
-                            new Message("new image - " + filePart.filename()).toSSE()
-                    );
-                }
-            })
-            .map(percentage -> Progress.getInstance().setProgress(percentage));
+            .map(percentage -> Progress.getInstance().setProgress(percentage))
+            .doOnNext(progress -> {
+                progress.emitOnMessageStream(file.filename() + ":", sseStreamController.getMainSinks());
+            });
     }
 
     @PostMapping(path = "upload",
-            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
-            produces = MediaType.TEXT_EVENT_STREAM_VALUE
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
-    public ResponseEntity<Flux<ServerSentEvent<Progress>>> uploadFile(@RequestPart("file") FilePart file) {
+    public ResponseEntity<?> uploadFile(@RequestPart("file") FilePart file) {
         Path path = Paths.get(UPLOAD_DIRECTION, file.filename());
+        getProgress(getStatus(path, file), file).subscribe();
         saveFile(path, file);
-        return ResponseEntity.ok().body(
-                getProgress(getStatus(path, file), file)
-                        .map(Progress::toSSE)
-        );
+        return ResponseEntity.ok().build();
     }
 
     @Data
     private static class Progress {
         private String progress;
+        private boolean isFinished = true;
         public Progress setProgress(String progress) {
             this.progress = progress;
+            if(progress.equals("100%")) {
+                isFinished = true;
+            }
             return this;
         }
-        public ServerSentEvent<Progress> toSSE() {
-            return ServerSentEvent.<Progress>builder()
-                    .id(UUID.randomUUID().toString())
-                    .event("progress")
-                    .data(this)
-                    .build();
+
+        public void emitOnMessageStream(String prefix, Sinks.Many<ServerSentEvent<String>> sink) {
+            sink.tryEmitNext((new Message(prefix + this.progress)).toSSE());
         }
 
         private static Progress INSTANCE;
